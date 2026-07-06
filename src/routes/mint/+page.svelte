@@ -13,6 +13,7 @@
   let productName = $state("");
   let serialNumber = $state("");
   let duration = $state<number | null>(null);
+  let productValue = $state<number | null>(null);
   let customerWallet = $state("");
 
   let isMinting = $state(false);
@@ -43,7 +44,7 @@
       return;
     }
     if (!file) { errorMsg = "Please upload a warranty card thumbnail."; return; }
-    if (!productName || !serialNumber || !duration || !customerWallet) {
+    if (!productName || !serialNumber || !duration || !productValue || !customerWallet) {
       errorMsg = "Please fill in all fields."; return;
     }
 
@@ -88,7 +89,8 @@
           metadataUrl,
           productName,
           serialNumber,
-          BigInt(duration) * 2592000n
+          BigInt(duration) * 2592000n,
+          BigInt(productValue)
         ]
       });
 
@@ -106,7 +108,7 @@
         : "🎉 Warranty NFT successfully minted!";
 
       file = null; previewUrl = null; fileName = "";
-      productName = ""; serialNumber = ""; duration = null;
+      productName = ""; serialNumber = ""; duration = null; productValue = null;
     } catch (err: any) {
       console.error(err);
       errorMsg = err.message || "An error occurred during minting.";
@@ -242,7 +244,7 @@
             />
           </div>
 
-          <!-- Duration + Customer Wallet -->
+          <!-- Duration, Value + Customer Wallet -->
           <div class="field-row">
             <div class="field">
               <label for="duration" class="label">Duration (Months)</label>
@@ -257,6 +259,18 @@
               />
             </div>
             <div class="field">
+              <label for="product_value" class="label">Product Value ($)</label>
+              <input
+                id="product_value"
+                type="number"
+                bind:value={productValue}
+                class="input"
+                placeholder="200"
+                min="1"
+                required
+              />
+            </div>
+            <div class="field" style="grid-column: span 2;">
               <label for="customer_wallet" class="label">Customer Wallet</label>
               <input
                 id="customer_wallet"

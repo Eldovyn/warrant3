@@ -1,6 +1,43 @@
 <script lang="ts">
   import { ShieldCheck, Link, Zap, ChevronRight, Wallet, ArrowRight, CheckCircle } from '@lucide/svelte';
   import { web3State } from "$lib/web3.svelte";
+  import { onMount } from 'svelte';
+  import { readContract } from '@wagmi/core';
+  import { config } from '$lib/wagmi';
+  import WarrantyNFTAbi from '../abi/WarrantyNFT.json';
+
+  let warrantiesMinted = $state<number | null>(null);
+  let valueSecured = $state<number | null>(null);
+
+  onMount(async () => {
+    try {
+      const address = import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`;
+      
+      const [totalMinted, totalValue] = await Promise.all([
+        readContract(config, {
+          address,
+          abi: WarrantyNFTAbi,
+          functionName: 'getTotalWarrantiesMinted',
+        }) as Promise<bigint>,
+        readContract(config, {
+          address,
+          abi: WarrantyNFTAbi,
+          functionName: 'getTotalValueSecured',
+        }) as Promise<bigint>
+      ]);
+
+      warrantiesMinted = Number(totalMinted);
+      valueSecured = Number(totalValue);
+    } catch (err) {
+      console.error("Failed to fetch stats (ensure the contract has been recompiled and redeployed):", err);
+    }
+  });
+
+  function formatNumber(num: number) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M+';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'k+';
+    return num.toString();
+  }
 </script>
 
 <svelte:head>
@@ -85,12 +122,24 @@
 
         <div class="stats">
           <div class="stat">
-            <div class="stat-value">10k+</div>
+            <div class="stat-value">
+              {#if warrantiesMinted !== null}
+                {formatNumber(warrantiesMinted)}
+              {:else}
+                <span class="animate-pulse opacity-50">...</span>
+              {/if}
+            </div>
             <div class="stat-label">Warranties Minted</div>
           </div>
           <div class="stat-divider" aria-hidden="true"></div>
           <div class="stat">
-            <div class="stat-value">$2M+</div>
+            <div class="stat-value">
+              {#if valueSecured !== null}
+                ${formatNumber(valueSecured)}
+              {:else}
+                <span class="animate-pulse opacity-50">...</span>
+              {/if}
+            </div>
             <div class="stat-label">Value Secured</div>
           </div>
           <div class="stat-divider" aria-hidden="true"></div>
