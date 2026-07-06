@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { ShieldCheck, ChevronLeft, CheckCircle2, Loader2, Wallet, Send, Calendar, Hash, Package, ShieldAlert } from '@lucide/svelte';
+  import { ShieldCheck, ChevronLeft, Loader2, Wallet, Send, Calendar, Hash, Package, ShieldAlert, CheckCircle2, ExternalLink } from '@lucide/svelte';
   import { web3State } from "$lib/web3.svelte";
   import { readContract, writeContract, waitForTransactionReceipt, getPublicClient } from '@wagmi/core';
   import { config } from '$lib/wagmi';
@@ -17,7 +16,6 @@
     expiryDate: string;
     isActive: boolean;
     metadata: any;
-    // UI state for transferring this card
     showTransferInput: boolean;
     recipientAddress: string;
     isTransferring: boolean;
@@ -28,7 +26,6 @@
   let isLoading = $state(false);
   let errorMsg = $state("");
 
-  // Track wallet address and load warranties reactively
   $effect(() => {
     if (web3State.isConnected && web3State.address) {
       loadWarranties(web3State.address);
@@ -44,7 +41,6 @@
     warranties = [];
 
     try {
-      // Step 1: Query balanceOf to bypass logs search if balance is zero
       const balance = await readContract(config, {
         chainId: sepolia.id,
         address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
@@ -53,33 +49,21 @@
         args: [userAddress as `0x${string}`]
       }) as bigint;
 
-      if (balance === 0n) {
-        warranties = [];
-        isLoading = false;
-        return;
-      }
+      if (balance === 0n) { isLoading = false; return; }
 
       const publicClient = getPublicClient(config, { chainId: sepolia.id });
-      
-      // Step 2: Query all Transfer event logs where userAddress is the recipient ('to')
-      // Deployed block is 11215945 on Sepolia. We scan from 11215900n to reduce query block range size.
       const logs = await publicClient.getLogs({
         address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
         event: parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'),
-        args: {
-          to: userAddress as `0x${string}`
-        },
+        args: { to: userAddress as `0x${string}` },
         fromBlock: 11215900n
       });
 
-      // Step 3: Extract unique token IDs
       const uniqueTokenIds = [...new Set(logs.map(log => log.args.tokenId))];
       const items: WarrantyItem[] = [];
 
-      // Step 3: Query contract for each token to verify current ownership and load details
       for (const tokenId of uniqueTokenIds) {
         if (tokenId === undefined) continue;
-
         try {
           const currentOwner = await readContract(config, {
             chainId: sepolia.id,
@@ -89,76 +73,71 @@
             args: [tokenId]
           }) as `0x${string}`;
 
-          // Only show if the user is still the owner
-          if (currentOwner.toLowerCase() === userAddress.toLowerCase()) {
-            const details = await readContract(config, {
-              chainId: sepolia.id,
-              address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
-              abi: WarrantyNFTAbi,
-              functionName: 'getWarrantyDetails',
-              args: [tokenId]
-            }) as any;
+          if (currentOwner.toLowerCase() !== userAddress.toLowerCase()) continue;
 
-            const details_productId = details.productId !== undefined ? details.productId : details[0];
-            const details_serialNumber = details.serialNumber !== undefined ? details.serialNumber : details[1];
-            const details_activationTime = details.activationTime !== undefined ? details.activationTime : details[2];
-            const details_duration = details.duration !== undefined ? details.duration : details[3];
+          const details = await readContract(config, {
+            chainId: sepolia.id,
+            address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
+            abi: WarrantyNFTAbi,
+            functionName: 'getWarrantyDetails',
+            args: [tokenId]
+          }) as any;
 
-            const isActive = await readContract(config, {
-              chainId: sepolia.id,
-              address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
-              abi: WarrantyNFTAbi,
-              functionName: 'isWarrantyActive',
-              args: [tokenId]
-            }) as boolean;
+          const productId      = details.productId      !== undefined ? details.productId      : details[0];
+          const serialNumber   = details.serialNumber   !== undefined ? details.serialNumber   : details[1];
+          const activationTime = details.activationTime !== undefined ? details.activationTime : details[2];
+          const duration       = details.duration       !== undefined ? details.duration       : details[3];
 
-            const uri = await readContract(config, {
-              chainId: sepolia.id,
-              address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
-              abi: WarrantyNFTAbi,
-              functionName: 'tokenURI',
-              args: [tokenId]
-            }) as string;
+          const isActive = await readContract(config, {
+            chainId: sepolia.id,
+            address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
+            abi: WarrantyNFTAbi,
+            functionName: 'isWarrantyActive',
+            args: [tokenId]
+          }) as boolean;
 
-            let metadata: any = null;
-            if (uri) {
-              const gatewayUrl = uri.replace('ipfs://', 'https://ipfs.io/ipfs/');
-              try {
-                const response = await axios.get(gatewayUrl, { timeout: 8000 });
-                metadata = response.data;
-              } catch (ipfsErr) {
-                console.error(`Failed to fetch IPFS metadata for token #${tokenId}:`, ipfsErr);
-              }
-            }
+          const uri = await readContract(config, {
+            chainId: sepolia.id,
+            address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
+            abi: WarrantyNFTAbi,
+            functionName: 'tokenURI',
+            args: [tokenId]
+          }) as string;
 
-            const activationDate = new Date(Number(details_activationTime) * 1000);
-            let expiryDate: Date;
-            if (Number(details_duration) > 1000) {
-              expiryDate = new Date((Number(details_activationTime) + Number(details_duration)) * 1000);
-            } else {
-              expiryDate = new Date(activationDate.getTime());
-              expiryDate.setMonth(expiryDate.getMonth() + Number(details_duration));
-            }
-
-            items.push({
-              tokenId: tokenId.toString(),
-              productId: details_productId,
-              serialNumber: details_serialNumber,
-              activationDate: activationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-              expiryDate: expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
-              isActive,
-              metadata,
-              showTransferInput: false,
-              recipientAddress: "",
-              isTransferring: false,
-              transferError: ""
-            });
+          let metadata: any = null;
+          if (uri) {
+            try {
+              const res = await axios.get(uri.replace('ipfs://', 'https://ipfs.io/ipfs/'), { timeout: 8000 });
+              metadata = res.data;
+            } catch {}
           }
+
+          const activationDate = new Date(Number(activationTime) * 1000);
+          let expiryDate: Date;
+          if (Number(duration) > 1000) {
+            expiryDate = new Date((Number(activationTime) + Number(duration)) * 1000);
+          } else {
+            expiryDate = new Date(activationDate.getTime());
+            expiryDate.setMonth(expiryDate.getMonth() + Number(duration));
+          }
+
+          items.push({
+            tokenId: tokenId.toString(),
+            productId,
+            serialNumber,
+            activationDate: activationDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+            expiryDate: expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+            isActive,
+            metadata,
+            showTransferInput: false,
+            recipientAddress: "",
+            isTransferring: false,
+            transferError: ""
+          });
         } catch (tokenErr) {
-          console.error(`Failed to read contract details for token #${tokenId}:`, tokenErr);
+          console.error(`Failed to read details for token #${tokenId}:`, tokenErr);
         }
       }
-
       warranties = items;
     } catch (err: any) {
       console.error(err);
@@ -170,28 +149,19 @@
 
   async function handleTransfer(item: WarrantyItem) {
     if (!item.recipientAddress || !item.recipientAddress.startsWith("0x") || item.recipientAddress.length !== 42) {
-      item.transferError = "Invalid recipient address.";
+      item.transferError = "Invalid recipient wallet address.";
       return;
     }
-
     item.isTransferring = true;
     item.transferError = "";
-
     try {
       const hash = await writeContract(config, {
         address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
         abi: WarrantyNFTAbi,
         functionName: 'safeTransferFrom',
-        args: [
-          web3State.address as `0x${string}`,
-          item.recipientAddress as `0x${string}`,
-          BigInt(item.tokenId)
-        ]
+        args: [web3State.address as `0x${string}`, item.recipientAddress as `0x${string}`, BigInt(item.tokenId)]
       });
-
       await waitForTransactionReceipt(config, { hash });
-
-      // Successfully transferred, remove item from list
       warranties = warranties.filter(w => w.tokenId !== item.tokenId);
     } catch (err: any) {
       console.error(err);
@@ -202,233 +172,769 @@
   }
 </script>
 
-<div class="min-h-screen bg-slate-950 text-slate-50 selection:bg-indigo-500/30 overflow-hidden relative font-sans">
-  <!-- Glowing background elements -->
-  <div class="absolute top-0 -left-1/4 w-1/2 h-1/2 bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none"></div>
-  <div class="absolute bottom-0 -right-1/4 w-1/2 h-1/2 bg-purple-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+<svelte:head>
+  <title>My Warranties — Warrant3</title>
+  <meta name="description" content="View and manage all warranty NFTs in your Web3 wallet." />
+</svelte:head>
+
+<div class="root">
+  <!-- Ambient glows -->
+  <div class="glow glow-tl" aria-hidden="true"></div>
+  <div class="glow glow-br" aria-hidden="true"></div>
 
   <!-- Navbar -->
-  <header class="relative z-10 container mx-auto px-6 py-6 flex items-center justify-between border-b border-white/5">
-    <a href="/" class="flex items-center gap-2 text-slate-300 hover:text-white transition-colors">
-      <ChevronLeft class="w-5 h-5" />
-      <span class="font-medium">Back to Home</span>
-    </a>
-    <div class="flex items-center gap-2">
-      <ShieldCheck class="w-6 h-6 text-indigo-400" />
-      <span class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400 tracking-tight">
-        Warrant3
-      </span>
+  <header class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="back-link">
+        <ChevronLeft size={16} />
+        Back to Home
+      </a>
+      <a href="/" class="brand">
+        <ShieldCheck size={18} />
+        <span>Warrant3</span>
+      </a>
     </div>
   </header>
 
-  <!-- Content -->
-  <main class="relative z-10 container mx-auto px-6 pt-16 pb-32">
-    <div class="max-w-5xl mx-auto">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12 border-b border-white/5 pb-8">
-        <div>
-          <h1 class="text-4xl font-extrabold tracking-tight mb-2">My Warranties</h1>
-          <p class="text-slate-400">View and manage the active warranties tokenized in your Web3 wallet.</p>
-        </div>
-        
-        <div class="shrink-0 flex items-center gap-3">
-          {#if web3State.isConnected}
-            <div class="bg-indigo-500/10 border border-indigo-500/25 px-4 py-2 rounded-xl text-indigo-300 text-sm font-mono flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              {web3State.address?.slice(0, 6)}...{web3State.address?.slice(-4)}
-            </div>
-            <Button 
-              onclick={() => web3State.disconnect()} 
-              class="bg-rose-500/10 border border-rose-500/20 text-rose-300 hover:bg-rose-600 hover:text-white hover:border-rose-500/50 rounded-xl px-4 py-2 transition-all"
-            >
-              Disconnect
-            </Button>
-          {:else}
-            <Button onclick={() => web3State.connect()} class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-[0_0_15px_rgba(79,70,229,0.3)] border-none">
+  <main class="container page-main">
+    <!-- Page heading -->
+    <div class="page-heading animate-fade-in-up">
+      <div>
+        <h1 class="page-title">My Warranties</h1>
+        <p class="page-sub">View and manage the warranty NFTs in your Web3 wallet.</p>
+      </div>
+      <div class="heading-actions">
+        {#if web3State.isConnected}
+          <div class="wallet-chip">
+            <span class="wallet-dot" aria-hidden="true"></span>
+            <span class="wallet-addr">{web3State.address?.slice(0, 6)}…{web3State.address?.slice(-4)}</span>
+          </div>
+          <button onclick={() => web3State.disconnect()} class="btn-disconnect">
+            Disconnect
+          </button>
+        {:else}
+          <button onclick={() => web3State.connect()} disabled={web3State.isConnecting} class="btn-connect">
+            {#if web3State.isConnecting}
+              <Loader2 size={16} class="spin" />
+              Connecting…
+            {:else}
+              <Wallet size={16} />
               Connect Wallet
-            </Button>
-          {/if}
+            {/if}
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <!-- States -->
+    {#if !web3State.isConnected}
+      <!-- Disconnected -->
+      <div class="state-card animate-fade-in">
+        <div class="state-icon state-icon--blue">
+          <Wallet size={28} />
         </div>
+        <h2 class="state-title">Connect Your Wallet</h2>
+        <p class="state-desc">
+          Connect your Web3 compatible wallet (e.g. MetaMask) to query the blockchain
+          and display all warranty NFTs you own.
+        </p>
+        <button
+          onclick={() => web3State.connect()}
+          disabled={web3State.isConnecting}
+          class="btn-primary"
+        >
+          {#if web3State.isConnecting}
+            <Loader2 size={16} class="spin" />
+            Connecting Wallet…
+          {:else}
+            <Wallet size={16} />
+            Connect Wallet
+          {/if}
+        </button>
       </div>
 
-      {#if !web3State.isConnected}
-        <!-- Disconnected State -->
-        <div class="text-center py-20 bg-white/[0.01] border border-white/5 rounded-3xl p-8 backdrop-blur-sm max-w-xl mx-auto shadow-2xl relative overflow-hidden">
-          <div class="absolute inset-0 bg-gradient-to-r from-indigo-500/5 to-purple-500/5 pointer-events-none"></div>
-          <div class="relative z-10 space-y-6">
-            <div class="w-16 h-16 rounded-2xl bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-400">
-              <Wallet class="w-8 h-8" />
-            </div>
-            <h3 class="text-2xl font-bold text-white">Connect Your Wallet</h3>
-            <p class="text-slate-400 max-w-md mx-auto leading-relaxed">
-              Connect your Web3 compatible wallet (e.g. MetaMask) to query the blockchain and display all tokenized warranties you own.
-            </p>
-            <Button onclick={() => web3State.connect()} disabled={web3State.isConnecting} class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-5 px-8 h-auto text-base font-semibold shadow-[0_0_20px_rgba(79,70,229,0.3)] border-none">
-              {#if web3State.isConnecting}
-                <Loader2 class="w-4 h-4 animate-spin mr-2 inline" />
-                Connecting Wallet...
+    {:else if isLoading}
+      <!-- Loading -->
+      <div class="loading-state animate-fade-in">
+        <Loader2 size={32} class="spin loading-icon" />
+        <p class="loading-text">Scanning blockchain for your warranties…</p>
+        <p class="loading-hint">This may take a few seconds.</p>
+      </div>
+
+    {:else if errorMsg}
+      <!-- Error -->
+      <div class="state-card state-card--error animate-fade-in">
+        <div class="state-icon state-icon--error">
+          <ShieldAlert size={28} />
+        </div>
+        <h2 class="state-title">Blockchain Query Error</h2>
+        <p class="state-desc">{errorMsg}</p>
+        <button onclick={() => loadWarranties(web3State.address!)} class="btn-secondary">
+          Retry Search
+        </button>
+      </div>
+
+    {:else if warranties.length === 0}
+      <!-- Empty -->
+      <div class="state-card animate-fade-in">
+        <div class="state-icon state-icon--gray">
+          <Package size={28} />
+        </div>
+        <h2 class="state-title">No Warranties Found</h2>
+        <p class="state-desc">
+          We couldn't find any Warranty NFTs associated with your wallet.
+          If you recently received a product, you can mint its warranty on-chain.
+        </p>
+        <a href="/mint" class="btn-primary">
+          Mint a Warranty
+        </a>
+      </div>
+
+    {:else}
+      <!-- Warranty grid -->
+      <div class="grid animate-fade-in">
+        {#each warranties as item (item.tokenId)}
+          <div class="warranty-card">
+            <!-- Thumbnail -->
+            <div class="card-thumb">
+              {#if item.metadata?.image}
+                <img
+                  src={item.metadata.image.replace('ipfs://', 'https://ipfs.io/ipfs/')}
+                  alt={item.productId}
+                  class="card-img"
+                />
               {:else}
-                Connect Wallet
+                <div class="card-img-placeholder">
+                  <Package size={32} />
+                </div>
               {/if}
-            </Button>
-          </div>
-        </div>
-      {:else if isLoading}
-        <!-- Loading State -->
-        <div class="text-center py-24 space-y-4">
-          <Loader2 class="w-10 h-10 animate-spin text-indigo-400 mx-auto" />
-          <p class="text-slate-400 font-medium">Scanning blockchain for your warranties...</p>
-        </div>
-      {:else if errorMsg}
-        <!-- Error State -->
-        <div class="text-center py-16 bg-rose-500/5 border border-rose-500/10 rounded-2xl p-8 max-w-lg mx-auto space-y-4">
-          <ShieldAlert class="w-12 h-12 text-rose-400 mx-auto" />
-          <h3 class="text-lg font-bold text-white">Blockchain Query Error</h3>
-          <p class="text-slate-400 text-sm">{errorMsg}</p>
-          <Button onclick={() => loadWarranties(web3State.address!)} class="bg-slate-800 hover:bg-slate-700 text-white rounded-xl px-6">
-            Retry Search
-          </Button>
-        </div>
-      {:else if warranties.length === 0}
-        <!-- Empty State -->
-        <div class="text-center py-20 bg-white/[0.01] border border-white/5 rounded-3xl p-8 max-w-xl mx-auto shadow-2xl relative overflow-hidden">
-          <div class="relative z-10 space-y-6">
-            <div class="w-16 h-16 rounded-2xl bg-slate-800 border border-white/5 flex items-center justify-center mx-auto text-slate-400">
-              <Package class="w-8 h-8" />
+              <!-- Status badge on top right of image -->
+              {#if item.isActive}
+                <span class="card-status card-status--active">Active</span>
+              {:else}
+                <span class="card-status card-status--expired">Expired</span>
+              {/if}
             </div>
-            <h3 class="text-2xl font-bold text-white">No Warranties Found</h3>
-            <p class="text-slate-400 max-w-md mx-auto leading-relaxed">
-              We couldn't find any Warranty NFTs associated with your wallet address. If you recently purchased a product, you can mint its warranty on-chain.
-            </p>
-            <Button href="/mint" class="bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl py-5 px-8 h-auto text-base font-semibold shadow-[0_0_20px_rgba(236,72,153,0.3)] border-none">
-              Mint a Warranty
-            </Button>
-          </div>
-        </div>
-      {:else}
-        <!-- Warranties Grid -->
-        <div class="grid md:grid-cols-2 gap-8">
-          {#each warranties as item (item.tokenId)}
-            <div class="p-1 rounded-2xl bg-gradient-to-br from-white/5 via-white/[0.02] to-transparent hover:from-indigo-500/20 hover:via-indigo-500/5 transition-all duration-300 border border-white/5 shadow-xl relative group flex flex-col">
-              
-              <!-- Expiry Status Badge -->
-              <div class="absolute top-4 right-4 z-10">
-                {#if item.isActive}
-                  <span class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-semibold uppercase tracking-wider text-[10px] px-2.5 py-1 rounded-full backdrop-blur-md">
-                    Active
-                  </span>
-                {:else}
-                  <span class="bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold uppercase tracking-wider text-[10px] px-2.5 py-1 rounded-full backdrop-blur-md">
-                    Expired
-                  </span>
-                {/if}
+
+            <!-- Card body -->
+            <div class="card-body">
+              <div class="card-top">
+                <h3 class="card-title">{item.productId}</h3>
+                <span class="token-id">#{item.tokenId}</span>
               </div>
 
-              <!-- Thumbnail Image Container -->
-              <div class="w-full aspect-[16/9] rounded-xl overflow-hidden bg-slate-900 border border-white/5 relative flex items-center justify-center shrink-0">
-                {#if item.metadata?.image}
-                  <img 
-                    src={item.metadata.image.replace('ipfs://', 'https://ipfs.io/ipfs/')} 
-                    alt={item.productId} 
-                    class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
-                  />
-                {:else}
-                  <Package class="w-12 h-12 text-slate-700" />
-                {/if}
-              </div>
+              {#if item.metadata?.description}
+                <p class="card-desc">{item.metadata.description}</p>
+              {/if}
 
-              <!-- Product Details -->
-              <div class="p-6 flex-1 flex flex-col justify-between">
-                <div class="space-y-4">
-                  <div class="flex justify-between items-start">
-                    <h3 class="text-xl font-bold text-white leading-snug">{item.productId}</h3>
-                    <span class="font-mono text-xs text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                      #{item.tokenId}
-                    </span>
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-y-3 text-sm border-t border-white/5 pt-4">
-                    <div class="flex items-center gap-2 text-slate-400">
-                      <Hash class="w-4 h-4 text-slate-500" />
-                      <span>Serial Number</span>
-                    </div>
-                    <div class="text-white font-mono text-right font-medium truncate">{item.serialNumber}</div>
-
-                    <div class="flex items-center gap-2 text-slate-400">
-                      <Calendar class="w-4 h-4 text-slate-500" />
-                      <span>Expiry Date</span>
-                    </div>
-                    <div class="text-white text-right font-medium">{item.expiryDate}</div>
-                  </div>
-                  
-                  {#if item.metadata?.description}
-                    <p class="text-xs text-slate-400 leading-relaxed border-t border-white/5 pt-4 mt-2">
-                      {item.metadata.description}
-                    </p>
-                  {/if}
+              <div class="card-meta">
+                <div class="meta-row">
+                  <Hash size={13} />
+                  <span class="meta-key">Serial</span>
+                  <span class="meta-val mono">{item.serialNumber}</span>
                 </div>
+                <div class="meta-row">
+                  <Calendar size={13} />
+                  <span class="meta-key">Expiry</span>
+                  <span class="meta-val" class:expired={!item.isActive}>{item.expiryDate}</span>
+                </div>
+              </div>
 
-                <!-- Transfer Actions -->
-                <div class="border-t border-white/5 pt-6 mt-6 shrink-0">
-                  {#if !item.showTransferInput}
-                    <Button 
-                      onclick={() => item.showTransferInput = true} 
-                      class="w-full bg-indigo-600/10 border border-indigo-500/20 text-indigo-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-500/50 rounded-xl py-5 h-auto text-sm font-semibold transition-all flex items-center justify-center gap-2"
+              <!-- Transfer section -->
+              <div class="card-footer">
+                {#if !item.showTransferInput}
+                  <button
+                    onclick={() => item.showTransferInput = true}
+                    class="btn-transfer"
+                  >
+                    <Send size={14} />
+                    Transfer Warranty
+                  </button>
+                {:else}
+                  <div class="transfer-form animate-fade-in">
+                    <label class="transfer-label">Recipient Wallet Address</label>
+                    <div class="transfer-row">
+                      <input
+                        type="text"
+                        bind:value={item.recipientAddress}
+                        placeholder="0x…"
+                        class="transfer-input"
+                        disabled={item.isTransferring}
+                        required
+                      />
+                      <button
+                        onclick={() => handleTransfer(item)}
+                        disabled={item.isTransferring}
+                        class="transfer-send"
+                      >
+                        {#if item.isTransferring}
+                          <Loader2 size={14} class="spin" />
+                        {:else}
+                          Send
+                        {/if}
+                      </button>
+                    </div>
+
+                    {#if item.transferError}
+                      <p class="transfer-error">{item.transferError}</p>
+                    {/if}
+
+                    <button
+                      onclick={() => {
+                        item.showTransferInput = false;
+                        item.recipientAddress = "";
+                        item.transferError = "";
+                      }}
+                      disabled={item.isTransferring}
+                      class="transfer-cancel"
                     >
-                      <Send class="w-4 h-4" />
-                      Transfer Warranty
-                    </Button>
-                  {:else}
-                    <div class="space-y-3 animate-[fadeIn_0.2s_ease-out]">
-                      <div class="text-xs font-semibold text-slate-400">Recipient Wallet Address</div>
-                      <div class="flex gap-2">
-                        <input 
-                          type="text" 
-                          bind:value={item.recipientAddress}
-                          placeholder="0x..." 
-                          class="flex-1 bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-all font-mono"
-                          required
-                          disabled={item.isTransferring}
-                        />
-                        <Button 
-                          onclick={() => handleTransfer(item)}
-                          disabled={item.isTransferring}
-                          class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-4 py-2.5 h-auto text-sm font-semibold"
-                        >
-                          {#if item.isTransferring}
-                            <Loader2 class="w-4 h-4 animate-spin" />
-                          {:else}
-                            Send
-                          {/if}
-                        </Button>
-                      </div>
-
-                      {#if item.transferError}
-                        <p class="text-xs text-rose-400 mt-1">{item.transferError}</p>
-                      {/if}
-
-                      <div class="flex justify-end gap-2 pt-1">
-                        <button 
-                          onclick={() => {
-                            item.showTransferInput = false;
-                            item.recipientAddress = "";
-                            item.transferError = "";
-                          }}
-                          class="text-xs text-slate-400 hover:text-white transition-colors"
-                          disabled={item.isTransferring}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-
+                      Cancel
+                    </button>
+                  </div>
+                {/if}
               </div>
-
             </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </main>
 </div>
+
+<style>
+  /* ── Root ── */
+  .root {
+    min-height: 100vh;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    font-family: 'Poppins', sans-serif;
+    position: relative;
+    overflow-x: hidden;
+  }
+  .container {
+    max-width: 1180px;
+    margin-inline: auto;
+    padding-inline: 24px;
+  }
+
+  /* ── Glows ── */
+  .glow {
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(120px);
+  }
+  .glow-tl { top: -150px; left: -150px; width: 500px; height: 500px; background: rgba(20, 71, 230, 0.06); }
+  .glow-br { bottom: -150px; right: -150px; width: 400px; height: 400px; background: rgba(96, 165, 250, 0.05); }
+
+  /* ── Navbar ── */
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10, 10, 10, 0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid #262626;
+    height: 60px;
+    display: flex;
+    align-items: center;
+  }
+  .navbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .back-link {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #64748B;
+    text-decoration: none;
+    transition: color 200ms ease;
+  }
+  .back-link:hover { color: #FFFFFF; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #FFFFFF;
+    text-decoration: none;
+  }
+  .brand :global(svg) { color: #60A5FA; }
+
+  /* ── Page layout ── */
+  .page-main {
+    padding-top: 48px;
+    padding-bottom: 80px;
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  /* ── Page heading ── */
+  .page-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid #262626;
+    flex-wrap: wrap;
+  }
+  .page-title {
+    font-size: 32px;
+    font-weight: 700;
+    color: #FFFFFF;
+    letter-spacing: -0.5px;
+    margin-bottom: 6px;
+  }
+  .page-sub {
+    font-size: 15px;
+    color: #64748B;
+  }
+  .heading-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .wallet-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    color: #60A5FA;
+    background: rgba(96, 165, 250, 0.08);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 8px;
+    padding: 8px 14px;
+  }
+  .wallet-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10B981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+    animation: pulse-dot 2s infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 4px rgba(16, 185, 129, 0.4); }
+    50%       { box-shadow: 0 0 10px rgba(16, 185, 129, 0.8); }
+  }
+  .wallet-addr { color: inherit; }
+
+  .btn-disconnect {
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(228, 0, 20, 0.3);
+    background: transparent;
+    color: #E40014;
+    cursor: pointer;
+    transition: all 200ms ease;
+  }
+  .btn-disconnect:hover {
+    background: rgba(228, 0, 20, 0.08);
+    border-color: #E40014;
+  }
+
+  /* ── State cards ── */
+  .state-card {
+    max-width: 540px;
+    margin-inline: auto;
+    background: #171717;
+    border: 1px solid #262626;
+    border-radius: 16px;
+    padding: 48px 40px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .state-card--error { border-color: rgba(228, 0, 20, 0.2); }
+
+  .state-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .state-icon--blue  { background: rgba(96, 165, 250, 0.08); border: 1px solid rgba(96, 165, 250, 0.2); color: #60A5FA; }
+  .state-icon--error { background: rgba(228, 0, 20, 0.06); border: 1px solid rgba(228, 0, 20, 0.2); color: #E40014; }
+  .state-icon--gray  { background: #262626; border: 1px solid #262626; color: #64748B; }
+
+  .state-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #FFFFFF;
+  }
+  .state-desc {
+    font-size: 14px;
+    color: #64748B;
+    line-height: 1.65;
+    max-width: 380px;
+    margin: 0;
+  }
+
+  /* ── Loading ── */
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 80px 24px;
+    text-align: center;
+  }
+  :global(.loading-icon) { color: #60A5FA; }
+  .loading-text {
+    font-size: 15px;
+    font-weight: 500;
+    color: #D1D5DB;
+  }
+  .loading-hint { font-size: 13px; color: #64748B; }
+
+  /* ── Buttons ── */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 12px 24px;
+    border-radius: 8px;
+    border: none;
+    background: #1447E6;
+    color: #FFFFFF;
+    text-decoration: none;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(20, 71, 230, 0.3);
+    transition: background 200ms ease, box-shadow 200ms ease;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #1035C1;
+    box-shadow: 0 4px 16px rgba(20, 71, 230, 0.4);
+    color: #FFFFFF;
+  }
+  .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: 1px solid #262626;
+    background: transparent;
+    color: #D1D5DB;
+    cursor: pointer;
+    transition: all 200ms ease;
+    text-decoration: none;
+  }
+  .btn-secondary:hover { border-color: #64748B; color: #FFFFFF; }
+
+  .btn-connect {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: 1px solid #262626;
+    background: transparent;
+    color: #D1D5DB;
+    cursor: pointer;
+    transition: all 200ms ease;
+  }
+  .btn-connect:hover:not(:disabled) { border-color: #60A5FA; color: #FFFFFF; }
+  .btn-connect:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  /* ── Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  /* ── Warranty card ── */
+  .warranty-card {
+    background: #171717;
+    border: 1px solid #262626;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .warranty-card:hover {
+    border-color: #64748B;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    transform: translateY(-3px);
+  }
+
+  /* ── Card thumbnail ── */
+  .card-thumb {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: #0A0A0A;
+    overflow: hidden;
+    border-bottom: 1px solid #262626;
+  }
+  .card-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 400ms ease;
+  }
+  .warranty-card:hover .card-img { transform: scale(1.04); }
+  .card-img-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748B;
+  }
+
+  .card-status {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .card-status--active {
+    color: #10B981;
+    background: rgba(10, 10, 10, 0.85);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    backdrop-filter: blur(4px);
+  }
+  .card-status--expired {
+    color: #E40014;
+    background: rgba(10, 10, 10, 0.85);
+    border: 1px solid rgba(228, 0, 20, 0.4);
+    backdrop-filter: blur(4px);
+  }
+
+  /* ── Card body ── */
+  .card-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    flex: 1;
+  }
+
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #FFFFFF;
+    line-height: 1.3;
+  }
+  .token-id {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 11px;
+    color: #60A5FA;
+    background: rgba(96, 165, 250, 0.1);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 6px;
+    padding: 3px 8px;
+    flex-shrink: 0;
+  }
+  .card-desc {
+    font-size: 12px;
+    color: #64748B;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+    border-top: 1px solid #262626;
+    border-bottom: 1px solid #262626;
+  }
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #64748B;
+  }
+  .meta-row :global(svg) { flex-shrink: 0; color: #64748B; }
+  .meta-key {
+    color: #64748B;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .meta-val {
+    color: #D1D5DB;
+    margin-left: auto;
+    text-align: right;
+  }
+  .meta-val.mono {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 11px;
+  }
+  .expired { color: #E40014 !important; }
+
+  /* ── Card footer / transfer ── */
+  .card-footer { margin-top: auto; }
+
+  .btn-transfer {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #262626;
+    background: transparent;
+    color: #64748B;
+    cursor: pointer;
+    transition: all 200ms ease;
+  }
+  .btn-transfer:hover {
+    border-color: #60A5FA;
+    color: #60A5FA;
+    background: rgba(96, 165, 250, 0.06);
+  }
+
+  .transfer-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .transfer-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .transfer-row {
+    display: flex;
+    gap: 8px;
+  }
+  .transfer-input {
+    flex: 1;
+    background: #0A0A0A;
+    border: 1px solid #64748B;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 12px;
+    color: #FFFFFF;
+    outline: none;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+    min-width: 0;
+  }
+  .transfer-input::placeholder { color: #737373; }
+  .transfer-input:focus {
+    border-color: #60A5FA;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.12);
+  }
+  .transfer-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .transfer-send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    background: #1447E6;
+    color: #FFFFFF;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 200ms ease;
+  }
+  .transfer-send:hover:not(:disabled) { background: #1035C1; }
+  .transfer-send:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .transfer-error {
+    font-size: 12px;
+    color: #E40014;
+    margin: 0;
+  }
+  .transfer-cancel {
+    align-self: flex-end;
+    background: none;
+    border: none;
+    font-family: 'Poppins', sans-serif;
+    font-size: 12px;
+    color: #64748B;
+    cursor: pointer;
+    transition: color 200ms ease;
+    padding: 4px;
+  }
+  .transfer-cancel:hover { color: #FFFFFF; }
+  .transfer-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Utilities ── */
+  :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 1024px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .page-heading { flex-direction: column; align-items: flex-start; }
+    .grid { grid-template-columns: 1fr; }
+    .state-card { padding: 32px 24px; }
+    .page-title { font-size: 26px; }
+  }
+</style>

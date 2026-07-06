@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button/index.js";
-  import { ShieldCheck, ChevronLeft, Hexagon, Layers, Key, ImagePlus, Loader2, Wallet } from '@lucide/svelte';
+  import { ShieldCheck, ChevronLeft, ImagePlus, Loader2, Wallet } from '@lucide/svelte';
   import { web3State } from "$lib/web3.svelte";
   import { pinFileToIPFS, pinJSONToIPFS } from "$lib/pinata";
   import { writeContract, waitForTransactionReceipt } from '@wagmi/core';
@@ -22,7 +21,6 @@
   let mintHash = $state<string | null>(null);
   let mintedTokenId = $state<string | null>(null);
 
-  // Auto fill customer wallet with connected address
   $effect(() => {
     if (web3State.isConnected && web3State.address && !customerWallet) {
       customerWallet = web3State.address;
@@ -44,14 +42,9 @@
       await web3State.connect();
       return;
     }
-
-    if (!file) {
-      errorMsg = "Please upload a warranty card thumbnail.";
-      return;
-    }
+    if (!file) { errorMsg = "Please upload a warranty card thumbnail."; return; }
     if (!productName || !serialNumber || !duration || !customerWallet) {
-      errorMsg = "Please fill in all fields.";
-      return;
+      errorMsg = "Please fill in all fields."; return;
     }
 
     errorMsg = "";
@@ -60,45 +53,32 @@
     mintedTokenId = null;
 
     try {
-      // Step 1: Upload image to IPFS
-      statusText = "Uploading image to IPFS...";
-      const imageMetadata = {
+      statusText = "Uploading image to IPFS…";
+      const imageIpfsHash = await pinFileToIPFS(file, {
         name: `Warranty_${serialNumber}_image`,
-        keyvalues: {
-          productName,
-          serialNumber
-        }
-      };
-      const imageIpfsHash = await pinFileToIPFS(file, imageMetadata);
+        keyvalues: { productName, serialNumber }
+      });
       const imageUrl = `ipfs://${imageIpfsHash}`;
 
-      // Step 2: Upload Metadata JSON to IPFS
-      statusText = "Uploading metadata to IPFS...";
+      statusText = "Uploading metadata to IPFS…";
       const metadata = {
         name: `Warranty NFT - ${productName}`,
         description: `Official blockchain-backed digital warranty for ${productName}.`,
         image: imageUrl,
         attributes: [
-          { trait_type: "Product Name", value: productName },
-          { trait_type: "Serial Number", value: serialNumber },
-          { trait_type: "Duration (Months)", value: duration.toString() },
-          { trait_type: "Issuer", value: web3State.address }
+          { trait_type: "Product Name",       value: productName },
+          { trait_type: "Serial Number",      value: serialNumber },
+          { trait_type: "Duration (Months)",  value: duration.toString() },
+          { trait_type: "Issuer",             value: web3State.address }
         ]
       };
-      
-      const jsonMetadata = {
+      const metadataIpfsHash = await pinJSONToIPFS(metadata, {
         name: `Warranty_${serialNumber}_meta`,
-        keyvalues: {
-          productName,
-          serialNumber
-        }
-      };
-      const metadataIpfsHash = await pinJSONToIPFS(metadata, jsonMetadata);
+        keyvalues: { productName, serialNumber }
+      });
       const metadataUrl = `ipfs://${metadataIpfsHash}`;
 
-      // Step 3: Trigger contract mint
-      statusText = "Please confirm minting transaction in your wallet...";
-      
+      statusText = "Please confirm the transaction in your wallet…";
       const hash = await writeContract(config, {
         address: import.meta.env.VITE_CONTRACT_ADDRESS as `0x${string}`,
         abi: WarrantyNFTAbi,
@@ -108,42 +88,25 @@
           metadataUrl,
           productName,
           serialNumber,
-          BigInt(duration) * 2592000n // Convert months to seconds (30 days per month)
+          BigInt(duration) * 2592000n
         ]
       });
 
       mintHash = hash;
-      statusText = "Waiting for transaction confirmation...";
-
+      statusText = "Waiting for transaction confirmation…";
       const receipt = await waitForTransactionReceipt(config, { hash });
 
-      // Step 4: Parse Token ID
-      const logs = parseEventLogs({
-        abi: WarrantyNFTAbi,
-        eventName: 'WarrantyMinted',
-        logs: receipt.logs,
-      });
-
+      const logs = parseEventLogs({ abi: WarrantyNFTAbi, eventName: 'WarrantyMinted', logs: receipt.logs });
       if (logs && logs[0]) {
         const tokenIdVal = (logs[0] as any).args?.tokenId;
-        if (tokenIdVal !== undefined) {
-          mintedTokenId = tokenIdVal.toString();
-          statusText = `🎉 Warranty NFT successfully minted! Token ID: #${mintedTokenId}`;
-        } else {
-          statusText = "🎉 Warranty NFT successfully minted!";
-        }
-      } else {
-        statusText = "🎉 Warranty NFT successfully minted!";
+        mintedTokenId = tokenIdVal !== undefined ? tokenIdVal.toString() : null;
       }
+      statusText = mintedTokenId
+        ? `🎉 Successfully minted! Token ID: #${mintedTokenId}`
+        : "🎉 Warranty NFT successfully minted!";
 
-      // Reset form
-      file = null;
-      previewUrl = null;
-      fileName = "";
-      productName = "";
-      serialNumber = "";
-      duration = null;
-
+      file = null; previewUrl = null; fileName = "";
+      productName = ""; serialNumber = ""; duration = null;
     } catch (err: any) {
       console.error(err);
       errorMsg = err.message || "An error occurred during minting.";
@@ -154,219 +117,632 @@
   }
 </script>
 
-<div class="min-h-screen bg-slate-950 text-slate-50 selection:bg-pink-500/30 overflow-hidden relative font-sans">
-  <!-- Glowing background elements -->
-  <div class="absolute top-0 right-0 w-1/2 h-1/2 bg-pink-500/10 blur-[120px] rounded-full pointer-events-none"></div>
-  <div class="absolute bottom-0 left-0 w-1/2 h-1/2 bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+<svelte:head>
+  <title>Mint Warranty — Warrant3</title>
+  <meta name="description" content="Mint a new Warranty NFT by uploading product details and image to IPFS." />
+</svelte:head>
+
+<div class="root">
+  <!-- Ambient glows -->
+  <div class="glow glow-tl" aria-hidden="true"></div>
+  <div class="glow glow-br" aria-hidden="true"></div>
 
   <!-- Navbar -->
-  <header class="relative z-10 container mx-auto px-6 py-6 flex items-center justify-between border-b border-white/5">
-    <a href="/" class="flex items-center gap-2 text-slate-300 hover:text-white transition-colors">
-      <ChevronLeft class="w-5 h-5" />
-      <span class="font-medium">Back to Home</span>
-    </a>
-    <div class="flex items-center gap-2">
-      <ShieldCheck class="w-6 h-6 text-indigo-400" />
-      <span class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400 tracking-tight">
-        Warrant3
-      </span>
+  <header class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="back-link">
+        <ChevronLeft size={16} />
+        Back to Home
+      </a>
+      <a href="/" class="brand">
+        <ShieldCheck size={18} />
+        <span>Warrant3</span>
+      </a>
     </div>
   </header>
 
-  <!-- Content -->
-  <main class="relative z-10 container mx-auto px-6 pt-16 pb-32 grid lg:grid-cols-2 gap-16 items-center">
-    
-    <!-- Text/Info Side -->
-    <div class="space-y-8">
-      <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight">
-        Mint a New <br/>
-        <span class="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-indigo-400">
-          Warranty NFT
-        </span>
-      </h1>
-      <p class="text-slate-400 text-lg leading-relaxed max-w-md">
-        Digitize your physical product warranties. By minting an NFT, you create an immutable, globally verifiable proof of ownership that lasts forever.
+  <main class="container page-main">
+    <!-- Left info panel -->
+    <div class="info-panel animate-fade-in-up">
+      <div class="panel-badge">Step-by-step</div>
+      <h1 class="panel-title">Mint a New<br /><span class="gradient-text">Warranty NFT</span></h1>
+      <p class="panel-sub">
+        Digitize your physical product warranties. Create an immutable,
+        globally verifiable proof of ownership that lasts forever.
       </p>
 
-      <div class="space-y-6 pt-4">
-        <div class="flex items-start gap-4">
-          <div class="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
-            <Hexagon class="w-5 h-5 text-indigo-400" />
-          </div>
+      <ol class="steps">
+        <li class="step">
+          <div class="step-num">1</div>
           <div>
-            <h4 class="font-semibold text-white mb-1">Decentralized Storage</h4>
-            <p class="text-sm text-slate-400">Metadata is stored securely on IPFS.</p>
+            <div class="step-title">Upload Thumbnail</div>
+            <div class="step-desc">Upload the product image to IPFS for decentralized storage.</div>
           </div>
-        </div>
-        <div class="flex items-start gap-4">
-          <div class="w-10 h-10 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
-            <Layers class="w-5 h-5 text-purple-400" />
-          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">2</div>
           <div>
-            <h4 class="font-semibold text-white mb-1">Soulbound or Transferable</h4>
-            <p class="text-sm text-slate-400">Choose if the warranty follows the user or the item.</p>
+            <div class="step-title">Fill Product Details</div>
+            <div class="step-desc">Enter the product name, serial number, and warranty duration.</div>
           </div>
-        </div>
-        <div class="flex items-start gap-4">
-          <div class="w-10 h-10 rounded-full bg-pink-500/20 border border-pink-500/30 flex items-center justify-center shrink-0">
-            <Key class="w-5 h-5 text-pink-400" />
-          </div>
+        </li>
+        <li class="step">
+          <div class="step-num">3</div>
           <div>
-            <h4 class="font-semibold text-white mb-1">Cryptographic Proof</h4>
-            <p class="text-sm text-slate-400">Unforgeable mathematical certainty of authenticity.</p>
+            <div class="step-title">Confirm & Mint</div>
+            <div class="step-desc">Approve the transaction in your wallet to mint the NFT on-chain.</div>
           </div>
-        </div>
-      </div>
+        </li>
+      </ol>
     </div>
 
-    <!-- Mint Form Side -->
-    <div class="relative w-full max-w-lg mx-auto">
-      <div class="absolute inset-0 bg-gradient-to-r from-pink-500/20 to-indigo-500/20 rounded-3xl blur-xl transform scale-105 pointer-events-none"></div>
-      
-      <div class="relative bg-slate-900/80 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl">
-        <div class="mb-8">
-          <h3 class="text-2xl font-bold text-white mb-2">Warranty Details</h3>
-          <p class="text-sm text-slate-400">Fill in the product details to generate the metadata.</p>
+    <!-- Form panel -->
+    <div class="form-panel animate-fade-in-up" style="animation-delay: 100ms">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Warranty Details</h2>
+          <p class="card-sub">Fill in the product details to generate the metadata.</p>
         </div>
 
-        <form class="space-y-5" onsubmit={handleMint}>
+        <form class="form" onsubmit={handleMint}>
           <!-- Image Upload -->
-          <div>
-            <label for="file-upload" class="block text-sm font-medium text-slate-300 mb-2">Warranty Card Thumbnail</label>
-            <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-white/10 border-dashed rounded-xl bg-white/[0.02] hover:bg-white/5 hover:border-indigo-500/50 transition-colors cursor-pointer group relative">
-              <label for="file-upload" class="absolute inset-0 w-full h-full cursor-pointer opacity-0 z-10"></label>
-              <div class="space-y-1 text-center relative z-0">
-                <input id="file-upload" name="file-upload" type="file" class="sr-only" accept="image/*" onchange={handleFileChange}>
-                {#if previewUrl}
-                  <img src={previewUrl} alt="Thumbnail Preview" class="mx-auto max-h-32 rounded-lg object-contain mb-2" />
-                  <p class="text-sm text-indigo-400 font-medium">{fileName}</p>
-                  <p class="text-xs text-slate-500">Click to change image</p>
-                {:else}
-                  <ImagePlus class="mx-auto h-12 w-12 text-slate-500 group-hover:text-indigo-400 transition-colors" />
-                  <div class="flex text-sm text-slate-400 justify-center">
-                    <span class="relative font-medium text-indigo-400 hover:text-indigo-300">
-                      Upload a file
-                    </span>
-                    <p class="pl-1">or drag and drop</p>
+          <div class="field">
+            <label for="file-upload" class="label">Warranty Card Thumbnail</label>
+            <div class="upload-zone" class:has-preview={!!previewUrl}>
+              <input
+                id="file-upload"
+                type="file"
+                accept="image/*"
+                class="sr-only"
+                onchange={handleFileChange}
+              />
+              {#if previewUrl}
+                <img src={previewUrl} alt="Preview" class="upload-preview" />
+                <div class="upload-caption">
+                  <span class="filename">{fileName}</span>
+                  <label for="file-upload" class="change-link">Click to change</label>
+                </div>
+              {:else}
+                <label for="file-upload" class="upload-placeholder">
+                  <div class="upload-icon">
+                    <ImagePlus size={28} />
                   </div>
-                  <p class="text-xs text-slate-500">PNG, JPG, GIF up to 10MB</p>
-                {/if}
-              </div>
+                  <div class="upload-text">
+                    <span class="upload-cta">Click to upload</span>
+                    <span class="upload-hint">PNG, JPG, GIF — up to 10 MB</span>
+                  </div>
+                </label>
+              {/if}
             </div>
           </div>
 
-          <div>
-            <label for="product_name" class="block text-sm font-medium text-slate-300 mb-2">Product Name</label>
-            <input 
+          <!-- Product Name -->
+          <div class="field">
+            <label for="product_name" class="label">Product Name</label>
+            <input
               id="product_name"
-              type="text" 
+              type="text"
               bind:value={productName}
-              class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" 
+              class="input"
               placeholder="e.g. Asus ROG Strix G15"
               required
             />
           </div>
 
-          <div>
-            <label for="serial_number" class="block text-sm font-medium text-slate-300 mb-2">Serial Number</label>
-            <input 
+          <!-- Serial Number -->
+          <div class="field">
+            <label for="serial_number" class="label">Serial Number</label>
+            <input
               id="serial_number"
-              type="text" 
+              type="text"
               bind:value={serialNumber}
-              class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" 
+              class="input"
               placeholder="e.g. SN-98234-XYZ"
               required
             />
           </div>
 
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label for="duration" class="block text-sm font-medium text-slate-300 mb-2">Duration (Months)</label>
-              <input 
+          <!-- Duration + Customer Wallet -->
+          <div class="field-row">
+            <div class="field">
+              <label for="duration" class="label">Duration (Months)</label>
+              <input
                 id="duration"
-                type="number" 
+                type="number"
                 bind:value={duration}
-                class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" 
+                class="input"
                 placeholder="24"
                 min="1"
                 required
               />
             </div>
-            <div>
-              <label for="customer_wallet" class="block text-sm font-medium text-slate-300 mb-2">Customer Wallet Address</label>
-              <input 
+            <div class="field">
+              <label for="customer_wallet" class="label">Customer Wallet</label>
+              <input
                 id="customer_wallet"
-                type="text" 
+                type="text"
                 bind:value={customerWallet}
-                class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" 
-                placeholder="0x..."
+                class="input"
+                placeholder="0x…"
                 required
               />
             </div>
           </div>
 
+          <!-- Error -->
           {#if errorMsg}
-            <div class="text-rose-400 text-sm text-center bg-rose-500/10 border border-rose-500/20 py-2.5 px-4 rounded-xl">
-              {errorMsg}
-            </div>
+            <div class="alert alert-error">{errorMsg}</div>
           {/if}
 
+          <!-- Status -->
           {#if statusText}
-            <div class="text-indigo-300 text-sm text-center bg-indigo-500/10 border border-indigo-500/20 py-2.5 px-4 rounded-xl flex items-center justify-center gap-2">
+            <div class="alert alert-info">
               {#if isMinting && !mintHash}
-                <Loader2 class="w-4 h-4 animate-spin text-indigo-400" />
+                <Loader2 size={14} class="spin" />
               {/if}
-              <span>{statusText}</span>
+              {statusText}
             </div>
           {/if}
 
+          <!-- Tx Hash -->
           {#if mintHash}
-            <div class="text-xs text-center text-slate-400 bg-slate-800/50 p-3 rounded-xl border border-white/5 space-y-1">
-              <div class="font-medium text-white">Transaction Hash:</div>
-              <a 
-                href="https://sepolia.etherscan.io/tx/{mintHash}" 
-                target="_blank" 
+            <div class="tx-box">
+              <div class="tx-label">Transaction Hash</div>
+              <a
+                href="https://sepolia.etherscan.io/tx/{mintHash}"
+                target="_blank"
                 rel="noreferrer"
-                class="text-indigo-400 hover:underline break-all block font-mono"
-              >
-                {mintHash}
-              </a>
+                class="tx-hash"
+              >{mintHash}</a>
             </div>
           {/if}
 
-          <div class="pt-4">
-            {#if !web3State.isConnected}
-              <Button 
-                type="button"
-                onclick={() => web3State.connect()}
-                disabled={web3State.isConnecting}
-                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-6 h-auto text-lg font-semibold shadow-[0_0_20px_rgba(79,70,229,0.3)] border-none flex items-center justify-center gap-2"
-              >
-                <Wallet class="w-5 h-5" />
-                {web3State.isConnecting ? 'Connecting Wallet...' : 'Connect Wallet to Mint'}
-              </Button>
-            {:else}
-              <Button 
-                type="submit"
-                disabled={isMinting}
-                class="w-full bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl py-6 h-auto text-lg font-semibold shadow-[0_0_20px_rgba(236,72,153,0.3)] border-none flex items-center justify-center gap-2"
-              >
-                {#if isMinting}
-                  <Loader2 class="w-5 h-5 animate-spin" />
-                  Minting...
-                {:else}
-                  Mint Warranty NFT
-                {/if}
-              </Button>
-            {/if}
-            <p class="text-center text-xs text-slate-500 mt-4">
-              Requires MetaMask or a Web3 compatible wallet. Gas fees apply.
-            </p>
-          </div>
+          <!-- Submit -->
+          {#if !web3State.isConnected}
+            <button
+              type="button"
+              onclick={() => web3State.connect()}
+              disabled={web3State.isConnecting}
+              class="btn-submit btn-connect"
+            >
+              {#if web3State.isConnecting}
+                <Loader2 size={18} class="spin" />
+                Connecting Wallet…
+              {:else}
+                <Wallet size={18} />
+                Connect Wallet to Mint
+              {/if}
+            </button>
+          {:else}
+            <button type="submit" disabled={isMinting} class="btn-submit">
+              {#if isMinting}
+                <Loader2 size={18} class="spin" />
+                Minting…
+              {:else}
+                Mint Warranty NFT
+              {/if}
+            </button>
+          {/if}
+
+          <p class="form-note">
+            Requires MetaMask or a Web3 compatible wallet. Gas fees apply.
+          </p>
         </form>
       </div>
     </div>
-
   </main>
 </div>
 
+<style>
+  /* ── Root ── */
+  .root {
+    min-height: 100vh;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    font-family: 'Poppins', sans-serif;
+    position: relative;
+    overflow-x: hidden;
+  }
+  .container {
+    max-width: 1180px;
+    margin-inline: auto;
+    padding-inline: 24px;
+  }
+
+  /* ── Glows ── */
+  .glow {
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(120px);
+  }
+  .glow-tl { top: -150px; left: -150px; width: 500px; height: 500px; background: rgba(20, 71, 230, 0.07); }
+  .glow-br { bottom: -150px; right: -150px; width: 400px; height: 400px; background: rgba(96, 165, 250, 0.05); }
+
+  /* ── Navbar ── */
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10, 10, 10, 0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid #262626;
+    height: 60px;
+    display: flex;
+    align-items: center;
+  }
+  .navbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .back-link {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #64748B;
+    text-decoration: none;
+    transition: color 200ms ease;
+  }
+  .back-link:hover { color: #FFFFFF; }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #FFFFFF;
+    text-decoration: none;
+  }
+  .brand :global(svg) { color: #60A5FA; }
+
+  /* ── Page layout ── */
+  .page-main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: start;
+    padding-top: 64px;
+    padding-bottom: 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── Info panel ── */
+  .info-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    position: sticky;
+    top: 80px;
+  }
+  .panel-badge {
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 500;
+    color: #60A5FA;
+    background: rgba(96, 165, 250, 0.08);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 999px;
+    padding: 4px 12px;
+    width: fit-content;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .panel-title {
+    font-size: clamp(28px, 3vw, 40px);
+    font-weight: 700;
+    line-height: 1.15;
+    color: #FFFFFF;
+    letter-spacing: -0.5px;
+  }
+  .gradient-text {
+    background: linear-gradient(135deg, #60A5FA, #1447E6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .panel-sub {
+    font-size: 15px;
+    color: #64748B;
+    line-height: 1.65;
+  }
+
+  /* ── Steps ── */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 8px;
+    list-style: none;
+  }
+  .step {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(20, 71, 230, 0.15);
+    border: 1px solid rgba(20, 71, 230, 0.3);
+    color: #60A5FA;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #FFFFFF;
+    margin-bottom: 4px;
+  }
+  .step-desc {
+    font-size: 13px;
+    color: #64748B;
+    line-height: 1.5;
+  }
+
+  /* ── Form card ── */
+  .card {
+    background: #171717;
+    border: 1px solid #262626;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .card-header { margin-bottom: 24px; }
+  .card-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #FFFFFF;
+    margin-bottom: 6px;
+  }
+  .card-sub { font-size: 13px; color: #64748B; }
+
+  /* ── Form ── */
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #D1D5DB;
+  }
+
+  .input {
+    background: #0A0A0A;
+    border: 1px solid #64748B;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    color: #FFFFFF;
+    width: 100%;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+    outline: none;
+    line-height: 24px;
+  }
+  .input::placeholder { color: #737373; }
+  .input:focus {
+    border-color: #60A5FA;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
+  }
+  .input:disabled {
+    background: #171717;
+    color: #737373;
+    cursor: not-allowed;
+    border-color: #262626;
+  }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 1px dashed #64748B;
+    border-radius: 8px;
+    background: #0A0A0A;
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 200ms ease, background 200ms ease;
+    overflow: hidden;
+    position: relative;
+  }
+  .upload-zone:hover {
+    border-color: #60A5FA;
+    background: rgba(96, 165, 250, 0.04);
+  }
+  .upload-zone.has-preview {
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border-style: solid;
+    border-color: rgba(96, 165, 250, 0.3);
+  }
+
+  .upload-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    padding: 24px;
+    width: 100%;
+    text-align: center;
+  }
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    background: rgba(96, 165, 250, 0.08);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #60A5FA;
+  }
+  .upload-text { display: flex; flex-direction: column; gap: 4px; }
+  .upload-cta {
+    font-size: 14px;
+    font-weight: 500;
+    color: #60A5FA;
+  }
+  .upload-hint { font-size: 12px; color: #64748B; }
+
+  .upload-preview {
+    max-height: 140px;
+    object-fit: contain;
+    border-radius: 6px;
+  }
+  .upload-caption {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .filename { font-size: 13px; color: #D1D5DB; font-weight: 500; }
+  .change-link { font-size: 12px; color: #60A5FA; cursor: pointer; }
+
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* ── Alerts ── */
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    padding: 12px 16px;
+    border-radius: 8px;
+  }
+  .alert-error {
+    color: #E40014;
+    background: rgba(228, 0, 20, 0.06);
+    border: 1px solid rgba(228, 0, 20, 0.2);
+  }
+  .alert-info {
+    color: #60A5FA;
+    background: rgba(96, 165, 250, 0.06);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+  }
+
+  /* ── Tx box ── */
+  .tx-box {
+    background: #0A0A0A;
+    border: 1px solid #262626;
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .tx-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .tx-hash {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 12px;
+    color: #60A5FA;
+    word-break: break-all;
+    display: block;
+    text-decoration: none;
+    transition: color 200ms ease;
+  }
+  .tx-hash:hover { color: #FFFFFF; text-decoration: underline; }
+
+  /* ── Submit button ── */
+  .btn-submit {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 14px 24px;
+    border-radius: 8px;
+    border: none;
+    background: #1447E6;
+    color: #FFFFFF;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(20, 71, 230, 0.3);
+    transition: background 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    margin-top: 4px;
+  }
+  .btn-submit:hover:not(:disabled) {
+    background: #1035C1;
+    box-shadow: 0 4px 16px rgba(20, 71, 230, 0.4);
+    transform: translateY(-1px);
+  }
+  .btn-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+  .btn-connect {
+    background: transparent;
+    border: 1px solid #262626;
+    color: #D1D5DB;
+    box-shadow: none;
+  }
+  .btn-connect:hover:not(:disabled) {
+    border-color: #60A5FA;
+    color: #FFFFFF;
+    background: rgba(96, 165, 250, 0.06);
+    box-shadow: none;
+  }
+
+  .form-note {
+    font-size: 12px;
+    color: #64748B;
+    text-align: center;
+  }
+
+  :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .page-main { grid-template-columns: 1fr; gap: 40px; }
+    .info-panel { position: static; }
+  }
+  @media (max-width: 600px) {
+    .field-row { grid-template-columns: 1fr; }
+    .card { padding: 24px 20px; }
+  }
+</style>
