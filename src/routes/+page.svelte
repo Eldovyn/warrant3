@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button/index.js";
   import { ShieldCheck, Link, Zap, ChevronRight, Wallet } from '@lucide/svelte';
+  import { web3State } from "$lib/web3.svelte";
 </script>
 
 <div class="min-h-screen bg-slate-950 text-slate-50 selection:bg-indigo-500/30 overflow-hidden relative font-sans">
@@ -20,11 +21,27 @@
       <a href="#features" class="hover:text-white transition-colors">Features</a>
       <a href="/verify" class="hover:text-white transition-colors">Verify Warranty</a>
       <a href="/mint" class="hover:text-white transition-colors">Mint</a>
+      <a href="/my-warranties" class="hover:text-white transition-colors">My Warranties</a>
     </nav>
-    <Button class="bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_0_15px_rgba(79,70,229,0.5)] border border-indigo-500/50 transition-all duration-300 gap-2 rounded-full px-6">
-      <Wallet class="w-4 h-4" />
-      Connect Wallet
-    </Button>
+    
+    {#if web3State.isConnected}
+      <Button 
+        onclick={() => web3State.disconnect()}
+        class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition-all duration-300 gap-2 rounded-full px-6"
+      >
+        <Wallet class="w-4 h-4" />
+        {web3State.address?.slice(0, 6)}...{web3State.address?.slice(-4)}
+      </Button>
+    {:else}
+      <Button 
+        onclick={() => web3State.connect()}
+        disabled={web3State.isConnecting}
+        class="bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_0_15px_rgba(79,70,229,0.5)] border border-indigo-500/50 transition-all duration-300 gap-2 rounded-full px-6"
+      >
+        <Wallet class="w-4 h-4" />
+        {web3State.isConnecting ? 'Connecting...' : 'Connect Wallet'}
+      </Button>
+    {/if}
   </header>
 
   <!-- Hero Section -->
