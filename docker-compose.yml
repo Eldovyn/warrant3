@@ -6,8 +6,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # VITE_* vars must be present at BUILD TIME (Vite embeds them statically)
+      args:
+        - VITE_PINATA_API_KEY=${VITE_PINATA_API_KEY}
+        - VITE_PINATA_SECRET_API_KEY=${VITE_PINATA_SECRET_API_KEY}
+        - VITE_CONTRACT_ADDRESS=${VITE_CONTRACT_ADDRESS}
     ports:
-      # Maps the host port 3001 to the container port 3000 to avoid conflicts
+      # Maps the host port 3003 to the container port 3000
       - "3003:3000"
     environment:
       - NODE_ENV=production
