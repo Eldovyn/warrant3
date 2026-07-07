@@ -148,6 +148,14 @@
             <div class="stat-label">Immutable</div>
           </div>
         </div>
+
+        <div class="mt-8 flex items-center gap-4 animate-fade-in-up" style="animation-delay: 200ms;">
+          <span class="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Supported Tech</span>
+          <div class="flex items-center gap-4">
+             <img src="/images/ethereum.svg" alt="Ethereum" class="h-6 w-auto opacity-70 hover:opacity-100 transition-opacity cursor-pointer" title="Ethereum" />
+             <img src="/images/metamask.svg" alt="MetaMask" class="h-6 w-auto opacity-70 hover:opacity-100 transition-opacity cursor-pointer" title="MetaMask" />
+          </div>
+        </div>
       </div>
 
       <!-- Visual card -->
