@@ -111,7 +111,7 @@
 
         <div class="hero-cta">
           <a href="/mint" class="btn-primary btn-lg">
-            Mint a Warranty
+            Issue a Warranty
             <ArrowRight size={16} />
           </a>
           <a href="/verify" class="btn-secondary btn-lg">
@@ -240,8 +240,8 @@
     <section class="cta-banner container">
       <div class="cta-card">
         <div class="cta-content">
-          <h2 class="cta-title">Ready to tokenize your first warranty?</h2>
-          <p class="cta-sub">Connect your wallet and mint in under 2 minutes.</p>
+          <h2 class="cta-title">Are you a product issuer?</h2>
+          <p class="cta-sub">Connect your wallet to start tokenizing and issuing warranties.</p>
         </div>
         <a href="/mint" class="btn-primary btn-lg">
           Get Started
